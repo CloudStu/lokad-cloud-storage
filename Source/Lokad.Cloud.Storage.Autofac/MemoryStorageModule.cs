@@ -24,28 +24,26 @@ namespace Lokad.Cloud.Storage.Autofac
                 .ForInMemoryStorage()
                 .WithDataSerializer(c.Resolve<IDataSerializer>())
                 .WithObserver(c.ResolveOptional<IStorageObserver>())
-                .WithRuntimeFinalizer(c.ResolveOptional<IRuntimeFinalizer>())
-                .BuildStorageProviders());
+                .BuildStorageProviders())
+                .OnRelease(p => p.QueueStorage.AbandonAll());
 
             builder.Register(c => CloudStorage
                 .ForInMemoryStorage()
                 .WithDataSerializer(c.Resolve<IDataSerializer>())
                 .WithObserver(c.ResolveOptional<IStorageObserver>())
-                .WithRuntimeFinalizer(c.ResolveOptional<IRuntimeFinalizer>())
                 .BuildBlobStorage());
 
             builder.Register(c => CloudStorage
                 .ForInMemoryStorage()
                 .WithDataSerializer(c.Resolve<IDataSerializer>())
                 .WithObserver(c.ResolveOptional<IStorageObserver>())
-                .WithRuntimeFinalizer(c.ResolveOptional<IRuntimeFinalizer>())
-                .BuildQueueStorage());
+                .BuildQueueStorage())
+                .OnRelease(p => p.AbandonAll());
 
             builder.Register(c => CloudStorage
                 .ForInMemoryStorage()
                 .WithDataSerializer(c.Resolve<IDataSerializer>())
                 .WithObserver(c.ResolveOptional<IStorageObserver>())
-                .WithRuntimeFinalizer(c.ResolveOptional<IRuntimeFinalizer>())
                 .BuildTableStorage());
 
             builder.Register(c => new NeutralLogStorage { BlobStorage = new MemoryBlobStorageProvider() });

@@ -27,7 +27,7 @@ namespace Lokad.Cloud.Storage.Azure
     /// </para>
     /// <para>All the methods of <see cref="QueueStorageProvider"/> are thread-safe.</para>
     /// </remarks>
-    public class QueueStorageProvider : IQueueStorageProvider, IDisposable
+    public class QueueStorageProvider : IQueueStorageProvider
     {
         internal const string OverflowingMessagesContainerName = "lokad-cloud-overflowing-messages";
         internal const string ResilientMessagesContainerName = "lokad-cloud-resilient-messages";
@@ -43,7 +43,6 @@ namespace Lokad.Cloud.Storage.Azure
         readonly CloudQueueClient _queueStorage;
         readonly IBlobStorageProvider _blobStorage;
         readonly IDataSerializer _defaultSerializer;
-        readonly IRuntimeFinalizer _runtimeFinalizer;
         readonly RetryPolicies _policies;
         readonly IStorageObserver _observer;
 
@@ -55,40 +54,20 @@ namespace Lokad.Cloud.Storage.Azure
         /// <param name="blobStorage">Not null.</param>
         /// <param name="queueStorage">Not null.</param>
         /// <param name="defaultSerializer">Not null.</param>
-        /// <param name="runtimeFinalizer">May be null (handy for strict O/C mapper scenario).</param>
         /// <param name="observer">Can be <see langword="null"/>.</param>
         public QueueStorageProvider(
             CloudQueueClient queueStorage,
             IBlobStorageProvider blobStorage,
             IDataSerializer defaultSerializer,
-            IStorageObserver observer = null,
-            IRuntimeFinalizer runtimeFinalizer = null)
+            IStorageObserver observer = null)
         {
             _policies = new RetryPolicies(observer);
             _queueStorage = queueStorage;
             _blobStorage = blobStorage;
             _defaultSerializer = defaultSerializer;
-            _runtimeFinalizer = runtimeFinalizer;
             _observer = observer;
 
-            // finalizer can be null in a strict O/C mapper scenario
-            if(null != _runtimeFinalizer)
-            {
-                // self-registration for finalization
-                _runtimeFinalizer.Register(this);
-            }
-
             _inProcessMessages = new Dictionary<object, InProcessMessage>(20, new IdentityComparer());
-        }
-
-        /// <summary>
-        /// Disposing the provider will cause an abandon on all currently messages currently
-        /// in-process. At the end of the life-cycle of the provider, normally there is no
-        /// message in-process.
-        /// </summary>
-        public void Dispose()
-        {
-            AbandonRange(_inProcessMessages.Keys.ToArray());
         }
 
         /// <remarks></remarks>
@@ -869,6 +848,26 @@ namespace Lokad.Cloud.Storage.Azure
         public int AbandonRange<T>(IEnumerable<T> messages, TimeSpan timeToLive = default(TimeSpan), TimeSpan delay = default(TimeSpan))
         {
             return messages.Count(m => Abandon(m, timeToLive, delay));
+        }
+
+        public int AbandonAll()
+        {
+            int count = 0;
+            while(true)
+            {
+                List<object> messages;
+                lock (_sync)
+                {
+                    messages = _inProcessMessages.Keys.ToList();
+                }
+
+                if (messages.Count == 0)
+                {
+                    return count;
+                }
+
+                count += AbandonRange(messages);
+            }
         }
 
         /// <remarks></remarks>
