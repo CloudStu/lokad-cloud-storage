@@ -667,6 +667,56 @@ Time:2010-01-15T12:37:25.1611631Z</message>
 
             TableStorage.Delete(TableName, entities, false);
         }
+        
+        [Test]
+        public void InsertAndUpdateOversizedEntity()
+        {
+            var partition = Guid.NewGuid().ToString("N");
+            var entities = Entities(1, partition, 2000000); // 2MB entity should definitely be enough to overflow
+            var entity = entities.First();
+
+            TableStorage.Insert(TableName, entities);
+
+            var result = TableStorage.Get<string>(TableName, partition, entity.RowKey);
+            Assert.AreEqual(entity.Value, result.Value.Value);
+
+            entity.Value = RandomString(2000000);
+
+            TableStorage.Update(TableName, entities);
+
+            result = TableStorage.Get<string>(TableName, partition, entity.RowKey);
+            Assert.AreEqual(entity.Value, result.Value.Value);
+
+            TableStorage.Delete(TableName, entities);
+
+            result = TableStorage.Get<string>(TableName, partition, entity.RowKey);
+            Assert.AreEqual(false, result.HasValue);
+        }
+
+        [Test]
+        public void UpsertOversizedEntity()
+        {
+            var partition = Guid.NewGuid().ToString("N");
+            var entities = Entities(1, partition, 2000000); // 2MB entity should definitely be enough to overflow
+            var entity = entities.First();
+
+            TableStorage.Upsert(TableName, entities);
+
+            var result = TableStorage.Get<string>(TableName, partition, entity.RowKey);
+            Assert.AreEqual(entity.Value, result.Value.Value);
+
+            entity.Value = RandomString(2000000);
+
+            TableStorage.Upsert(TableName, entities);
+
+            result = TableStorage.Get<string>(TableName, partition, entity.RowKey);
+            Assert.AreEqual(entity.Value, result.Value.Value);
+
+            TableStorage.Delete(TableName, entities);
+
+            result = TableStorage.Get<string>(TableName, partition, entity.RowKey);
+            Assert.AreEqual(false, result.HasValue);
+        }
 
         CloudEntity<String>[] Entities(int count, string partitionKey, int entitySize)
         {

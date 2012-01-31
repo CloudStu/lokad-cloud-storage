@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Data.Services.Client;
 using System.Linq;
 using Lokad.Cloud.Storage.Azure;
+using System.IO;
 
 namespace Lokad.Cloud.Storage.InMemory
 {
@@ -23,6 +24,9 @@ namespace Lokad.Cloud.Storage.InMemory
         /// <summary>Formatter as requiered to handle FatEntities.</summary>
         internal IDataSerializer DataSerializer { get; set; }
 
+        /// <summary>Use the in-memory storage provider to store overflowing entities</summary>
+        internal IBlobStorageProvider _blobStorage;
+
         /// <summary>naive global lock to make methods thread-safe.</summary>
         readonly object _syncRoot;
 
@@ -36,6 +40,7 @@ namespace Lokad.Cloud.Storage.InMemory
             _tables = new Dictionary<string, List<MockTableEntry>>();
             _syncRoot = new object();
             DataSerializer = new CloudFormatter();
+            _blobStorage = CloudStorage.ForInMemoryStorage().BuildBlobStorage();
         }
 
         /// <see cref="ITableStorageProvider.CreateTable"/>
@@ -93,7 +98,7 @@ namespace Lokad.Cloud.Storage.InMemory
 
                 return from entry in _tables[tableName]
                        where predicate(entry)
-                       select entry.ToCloudEntity<T>(DataSerializer);
+                       select DeserializeFatEntity<T>(entry.Value, DataSerializer, entry.ETag);
             }
         }
 
@@ -158,7 +163,7 @@ namespace Lokad.Cloud.Storage.InMemory
                             PartitionKey = entity.PartitionKey,
                             RowKey = entity.RowKey,
                             ETag = etag,
-                            Value = FatEntity.Convert(entity, DataSerializer)
+                            Value = SerializeFatEntity(tableName, entity, DataSerializer)
                         });
                 }
             }
@@ -196,7 +201,7 @@ namespace Lokad.Cloud.Storage.InMemory
                             PartitionKey = entity.PartitionKey,
                             RowKey = entity.RowKey,
                             ETag = etag,
-                            Value = FatEntity.Convert(entity, DataSerializer)
+                            Value = SerializeFatEntity(tableName, entity, DataSerializer)
                         };
                 }
             }
@@ -230,6 +235,9 @@ namespace Lokad.Cloud.Storage.InMemory
 
                 var keys = new HashSet<string>(rowKeys);
                 entries.RemoveAll(entry => entry.PartitionKey == partitionKey && keys.Contains(entry.RowKey));
+
+                foreach (var blobRef in keys.Select(k => new OverflowingFatEntityBlobName<T>(tableName, partitionKey, k)))
+                    _blobStorage.DeleteBlobIfExist(blobRef);
             }
         }
 
@@ -254,7 +262,107 @@ namespace Lokad.Cloud.Storage.InMemory
 
                 // ok, we can delete safely now
                 entries.RemoveAll(entry => entityList.Any(entity => entity.PartitionKey == entry.PartitionKey && entity.RowKey == entry.RowKey));
+
+                foreach (var blobRef in entities.Select(e => new OverflowingFatEntityBlobName<T>(tableName, e.PartitionKey, e.RowKey)))
+                    _blobStorage.DeleteBlobIfExist(blobRef);
             }
+        }
+
+        private FatEntity SerializeFatEntity<T>(string tableName, CloudEntity<T> cloudEntity, IDataSerializer serializer)
+        {
+            FatEntity fatEntity = new FatEntity
+            {
+                PartitionKey = cloudEntity.PartitionKey,
+                RowKey = cloudEntity.RowKey,
+                Timestamp = cloudEntity.Timestamp
+            };
+
+            using (var stream = new MemoryStream())
+            {
+                serializer.Serialize(cloudEntity.Value, stream, typeof(T));
+
+                // Caution: MaxMessageSize is not related to the number of bytes
+                // but the number of characters when Base64-encoded:
+
+                if (stream.Length >= FatEntity.MaxByteCapacity)
+                {
+                    fatEntity.SetData(PutOverflowingFatEntityAndWrap(tableName, cloudEntity, serializer));
+                }
+                else
+                {
+                    try
+                    {
+                        fatEntity.SetData(stream.ToArray());
+                    }
+                    catch (ArgumentException)
+                    {
+                        fatEntity.SetData(PutOverflowingFatEntityAndWrap(tableName, cloudEntity, serializer));
+                    }
+                }
+            }
+            return fatEntity;
+        }
+
+        private byte[] PutOverflowingFatEntityAndWrap<T>(string tableName, CloudEntity<T> entity, IDataSerializer serializer)
+        {
+            var blobRef = new OverflowingFatEntityBlobName<T>(tableName, entity.PartitionKey, entity.RowKey);
+
+            // HACK: In this case serialization is performed another time (internally)
+            _blobStorage.PutBlob(blobRef, entity.Value);
+
+            var mw = new OverflowWrapper
+            {
+                ContainerName = blobRef.ContainerName,
+                BlobName = blobRef.ToString()
+            };
+
+            using (var stream = new MemoryStream())
+            {
+                serializer.Serialize(mw, stream, typeof(OverflowWrapper));
+                var serializerWrapper = stream.ToArray();
+                
+                return serializerWrapper;
+            }
+        }
+
+        private CloudEntity<T> DeserializeFatEntity<T>(FatEntity fatEntity, IDataSerializer serializer, string etag)
+        {
+            // TODO: Refactor this method away, and integrate it with the GetInternal method. Will give better flexibility to handle multiple entities.
+
+            T value;
+            var bytes = fatEntity.GetData();
+
+            var entityAsT = serializer.TryDeserializeAs<T>(bytes);
+
+            if (entityAsT.IsSuccess)
+                value = entityAsT.Value;
+            else
+            {
+                var entityAsWrapper = serializer.TryDeserializeAs<OverflowWrapper>(bytes);
+                if (entityAsWrapper.IsSuccess)
+                {
+                    var overflow = entityAsWrapper.Value;
+                    var blobContent = _blobStorage.GetBlob<T>(overflow.ContainerName, overflow.BlobName);
+                    if (blobContent.HasValue)
+                        value = blobContent.Value;
+                    else
+                        // TODO: Pick a nicer exception type
+                        throw new Exception("Found an overflow wrapper, but failed to get the referenced blob");
+                }
+                else
+                    throw new DataCorruptionException(string.Format("Unable to deserialize FatEntity to either {0} or OverflowWrapper", typeof(T).Name), entityAsWrapper.Error);
+            }
+
+            // TODO: potentially should delete the table entry if we've failed, so no one else attempts to get this bad entry.
+
+            return new CloudEntity<T>
+            {
+                PartitionKey = fatEntity.PartitionKey,
+                RowKey = fatEntity.RowKey,
+                Timestamp = fatEntity.Timestamp,
+                ETag = etag,
+                Value = value
+            };
         }
 
         static System.Tuple<string, string> ToId<T>(CloudEntity<T> entity)
@@ -272,11 +380,6 @@ namespace Lokad.Cloud.Storage.InMemory
             public string RowKey { get; set; }
             public string ETag { get; set; }
             public FatEntity Value { get; set; }
-
-            public CloudEntity<T> ToCloudEntity<T>(IDataSerializer serializer)
-            {
-                return FatEntity.Convert<T>(Value, serializer, ETag);
-            }
         }
     }
 }

@@ -17,6 +17,7 @@ namespace Lokad.Cloud.Storage.Instrumentation.Events
         TableUpdate,
         TableDelete,
         TableUpsert,
+        TableWrap,
         QueueGet,
         QueuePut,
         QueueDelete,

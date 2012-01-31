@@ -15,14 +15,14 @@ namespace Lokad.Cloud.Storage.Test.Queues
         public void Serialization()
         {
             // overflowing message
-            var om = new MessageWrapper {ContainerName = "con", BlobName = "blo"};
+            var om = new OverflowWrapper {ContainerName = "con", BlobName = "blo"};
 
             var stream = new MemoryStream();
             var serializer = new CloudFormatter();
 
             serializer.Serialize(om, stream, om.GetType());
             stream.Position = 0;
-            var omBis = (MessageWrapper) serializer.Deserialize(stream, typeof (MessageWrapper));
+            var omBis = (OverflowWrapper) serializer.Deserialize(stream, typeof (OverflowWrapper));
 
             Assert.AreEqual(om.ContainerName, omBis.ContainerName, "#A00");
             Assert.AreEqual(om.BlobName, omBis.BlobName, "#A01");

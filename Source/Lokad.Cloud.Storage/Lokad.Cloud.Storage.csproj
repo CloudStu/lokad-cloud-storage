@@ -87,6 +87,7 @@
     <Compile Include="CompressedRawFormatter.cs" />
     <Compile Include="Instrumentation\Events\MessagesRevivedEvent.cs" />
     <Compile Include="Instrumentation\StorageEventLevel.cs" />
+    <Compile Include="OverflowWrapper.cs" />
     <Compile Include="Queues\KeepAliveMessageHandle.cs" />
     <Compile Include="RawFormatter.cs" />
     <Compile Include="DataSerializerExtensions.cs" />
@@ -106,7 +107,6 @@
     <Compile Include="IRuntimeFinalizer.cs" />
     <Compile Include="Queues\IQueueStorageProvider.cs" />
     <Compile Include="Queues\MessageEnvelope.cs" />
-    <Compile Include="Queues\MessageWrapper.cs" />
     <Compile Include="Queues\QueueStorageExtensions.cs" />
     <Compile Include="Shared\Monads\Maybe.1.cs" />
     <Compile Include="Shared\Monads\Result.1.cs" />

@@ -184,6 +184,7 @@ namespace Lokad.Cloud.Storage
         {
             return new Azure.TableStorageProvider(
                 TableClient(),
+                BuildBlobStorage(),
                 DataSerializer,
                 Observer);
         }

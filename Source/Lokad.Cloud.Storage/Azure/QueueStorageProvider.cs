@@ -136,7 +136,7 @@ namespace Lokad.Cloud.Storage.Azure
             // 3. DESERIALIZE MESSAGE OR MESSAGE WRAPPER, CHECK-OUT
 
             var messages = new List<T>(count);
-            var wrappedMessages = new List<MessageWrapper>();
+            var wrappedMessages = new List<OverflowWrapper>();
 
             foreach (var rawMessage in rawMessages)
             {
@@ -189,7 +189,7 @@ namespace Lokad.Cloud.Storage.Azure
 
                     // 3.1.4 DESERIALIZE WRAPPER IF POSSIBLE
 
-                    var messageAsWrapper = dataSerializer.TryDeserializeAs<MessageWrapper>(stream);
+                    var messageAsWrapper = dataSerializer.TryDeserializeAs<OverflowWrapper>(stream);
                     if (messageAsWrapper.IsSuccess)
                     {
                         // we don't retrieve messages while holding the lock
@@ -357,7 +357,7 @@ namespace Lokad.Cloud.Storage.Azure
             // HACK: In this case serialization is performed another time (internally)
             _blobStorage.PutBlob(blobRef, message);
 
-            var mw = new MessageWrapper
+            var mw = new OverflowWrapper
                 {
                     ContainerName = blobRef.ContainerName,
                     BlobName = blobRef.ToString()
@@ -365,7 +365,7 @@ namespace Lokad.Cloud.Storage.Azure
 
             using (var stream = new MemoryStream())
             {
-                serializer.Serialize(mw, stream, typeof(MessageWrapper));
+                serializer.Serialize(mw, stream, typeof(OverflowWrapper));
                 var serializerWrapper = stream.ToArray();
 
                 NotifySucceeded(StorageOperationType.QueueWrap, stopwatch);
@@ -720,7 +720,7 @@ namespace Lokad.Cloud.Storage.Azure
 
             if (isOverflowing)
             {
-                var messageWrapper = dataSerializer.TryDeserializeAs<MessageWrapper>(data);
+                var messageWrapper = dataSerializer.TryDeserializeAs<OverflowWrapper>(data);
                 if (messageWrapper.IsSuccess)
                 {
                     _blobStorage.DeleteBlobIfExist(messageWrapper.Value.ContainerName, messageWrapper.Value.BlobName);
@@ -967,7 +967,7 @@ namespace Lokad.Cloud.Storage.Azure
             // 2. IF WRAPPED, UNWRAP; UNPACK XML IF SUPPORTED
 
             bool dataForRestorationAvailable;
-            var messageWrapper = dataSerializer.TryDeserializeAs<MessageWrapper>(data);
+            var messageWrapper = dataSerializer.TryDeserializeAs<OverflowWrapper>(data);
             if (messageWrapper.IsSuccess)
             {
                 string ignored;
@@ -1028,7 +1028,7 @@ namespace Lokad.Cloud.Storage.Azure
 
             // 2. IF WRAPPED, UNWRAP AND DELETE BLOB
 
-            var messageWrapper = dataSerializer.TryDeserializeAs<MessageWrapper>(persistedMessage.Data);
+            var messageWrapper = dataSerializer.TryDeserializeAs<OverflowWrapper>(persistedMessage.Data);
             if (messageWrapper.IsSuccess)
             {
                 _blobStorage.DeleteBlobIfExist(messageWrapper.Value.ContainerName, messageWrapper.Value.BlobName);
@@ -1391,7 +1391,7 @@ namespace Lokad.Cloud.Storage.Azure
 
         /// <summary>
         /// A flag indicating whether the original message was bigger than the max 
-        /// allowed size and was therefore wrapped in <see cref="MessageWrapper" />.
+        /// allowed size and was therefore wrapped in <see cref="OverflowWrapper" />.
         /// </summary>
         public bool IsOverflowing { get; set; }
 
